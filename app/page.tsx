@@ -27,7 +27,7 @@ interface PieRow   { name: string; value: number; }
 interface AlarmRow { nodename: string; Severity_Label: SeverityKey; alarm_text: string; network_type: string; Location?: string; [k: string]: any; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const API = "https://vi-alarm-dashbaord-1.onrender.com";
+const API = "https://vi-alarm-dashbaord-1.onrender.com"; // Your live backend
 const SEV_COLOR: Record<SeverityKey, string> = { Critical:"#EF4444", Major:"#F97316", Minor:"#10B981" };
 const SEV_BG:    Record<SeverityKey, string> = { Critical:"bg-red-100 text-red-700", Major:"bg-orange-100 text-orange-700", Minor:"bg-emerald-100 text-emerald-700" };
 const NET_BG: Record<string, string> = { MSS:"bg-violet-100 text-violet-700", MGW:"bg-sky-100 text-sky-700" };
@@ -72,7 +72,7 @@ function Card({ children, className = "", id = "" }: { children: React.ReactNode
   );
 }
 
-// ─── Export Utilities ─────────────────────────────────────────────────────────
+// ─── Utilities ─────────────────────────────────────────────────────────
 const exportToCSV = (data: any[], filename: string) => {
   if (!data || !data.length) return alert("No data to export!");
   const headers = Object.keys(data[0]);
@@ -123,6 +123,24 @@ const exportChartAsPNG = async (elementId: string, filename: string) => {
       (el as HTMLElement).style.visibility = "";
     });
   }
+};
+
+// NEW: Converts raw hrs/mins into a clean "Xd Yh Zm" string format
+const formatAging = (hrs: any, mins: any) => {
+  if ((hrs === "N/A" || hrs === undefined) && (mins === "N/A" || mins === undefined)) return null;
+  const totalMins = (Number(hrs) || 0) * 60 + (Number(mins) || 0);
+  if (totalMins === 0) return "0m";
+  
+  const d = Math.floor(totalMins / 1440);
+  const h = Math.floor((totalMins % 1440) / 60);
+  const m = totalMins % 60;
+  
+  const parts = [];
+  if (d > 0) parts.push(`${d}d`);
+  if (h > 0) parts.push(`${h}h`);
+  if (m > 0 || parts.length === 0) parts.push(`${m}m`);
+  
+  return parts.join(" ");
 };
 
 // ─── Custom Pie Label ─────────────────────────────────────────────────────────
@@ -189,22 +207,18 @@ export default function Dashboard() {
   const mssDonut = filteredDonut.filter(d => d.network_type === "MSS");
   const mgwDonut = filteredDonut.filter(d => d.network_type === "MGW");
 
-  // NEW: Calculates the top 5 highest ageing alarms for the new sidebar widget
+  // Calculates the top 5 highest ageing alarms based on total minutes
   const top5AgingAlarms = [...rawAlarms].sort((a, b) => {
     const ageA = (Number(a["aging in hrs"]) || 0) * 60 + (Number(a["aging in min"]) || 0);
     const ageB = (Number(b["aging in hrs"]) || 0) * 60 + (Number(b["aging in min"]) || 0);
     return ageB - ageA; 
   }).slice(0, 5);
 
-  // NEW: Email Action Handler
+  // UPGRADED: Opens Gmail explicitly in a new browser tab with Days/Hours/Mins format
   const handleMailTo = (e: React.MouseEvent, alarm: AlarmRow) => {
-    e.stopPropagation(); // Prevents opening the investigator panel when clicking the email button
+    e.stopPropagation();
     const subject = encodeURIComponent(`Action Required: ${alarm.Severity_Label} Alarm at ${alarm.nodename}`);
-    
-    let agingText = "N/A";
-    if (alarm["aging in hrs"] !== undefined && alarm["aging in hrs"] !== "N/A") agingText = `${alarm["aging in hrs"]}h `;
-    if (alarm["aging in min"] !== undefined && alarm["aging in min"] !== "N/A") agingText += `${alarm["aging in min"]}m`;
-    agingText = agingText.trim();
+    const agingText = formatAging(alarm["aging in hrs"], alarm["aging in min"]) || "N/A";
   
     const body = encodeURIComponent(
       `Team,\n\nPlease review the following network alarm:\n\n` +
@@ -217,7 +231,10 @@ export default function Dashboard() {
       `Please investigate immediately.\n\n` + 
       `-- Vi Network Command Center`
     );
-    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+    
+    // Web URL specifically forces Gmail compose window
+    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`;
+    window.open(gmailUrl, "_blank");
   };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -362,7 +379,6 @@ export default function Dashboard() {
     );
   }
 
-  // ── SevBar ──────────────────────────────────────────────────────────────────
   function SevBar({ label, val, total, color }: { label: string; val: number; total: number; color: string }) {
     const pct = total > 0 ? Math.round((val / total) * 100) : 0;
     return (
@@ -376,7 +392,6 @@ export default function Dashboard() {
     );
   }
 
-  // ── DonutSection ────────────────────────────────────────────────────────────
   function DonutSection({ rows, title }: { rows: DonutRow[]; title: string }) {
     if (!rows.length) return null;
     const sectionId = `donut-${title.replace(/\s+/g, "-").toLowerCase()}`;
@@ -418,7 +433,6 @@ export default function Dashboard() {
     );
   }
 
-  // ── SheetPicker ─────────────────────────────────────────────────────────────
   function SheetPicker() {
     const toggle = (s: string) =>
       setSelectedSheets(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
@@ -471,7 +485,6 @@ export default function Dashboard() {
         {/* ── LEFT SIDEBAR ──────────────────────────────────────────────── */}
         <div className="w-[340px] bg-white border-r border-gray-200 flex flex-col shadow-sm shrink-0">
 
-          {/* Brand + upload */}
           <div className="px-5 pt-6 pb-5 border-b border-gray-100">
             <div className="flex items-center gap-3 mb-5">
               <div className="w-9 h-9 rounded-xl bg-red-600 flex items-center justify-center shrink-0">
@@ -566,7 +579,7 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* NEW: Top 5 Highest Ageing Alarms */}
+              {/* Top 5 Highest Ageing Alarms */}
               <div>
                 <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-2">Top 5 Longest Ageing</p>
                 <div className="flex flex-col gap-2">
@@ -575,15 +588,13 @@ export default function Dashboard() {
                   ) : (
                     top5AgingAlarms.map((alarm, idx) => {
                       const color = SEV_COLOR[alarm.Severity_Label] ?? "#9CA3AF";
+                      const agingStr = formatAging(alarm["aging in hrs"], alarm["aging in min"]);
                       return (
                         <div key={idx} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm relative group hover:border-red-200 transition-colors" style={{ borderLeftWidth: 3, borderLeftColor: color }}>
                           <div className="flex justify-between items-start mb-1">
                              <span className="font-bold text-xs text-gray-800 truncate pr-2">{alarm.nodename}</span>
-                             {/* NEW: Email action button */}
                              <button onClick={(e) => handleMailTo(e, alarm)} className="text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-md transition-colors flex items-center gap-1 shrink-0" title="Email Alarm">
-                                ✉️ {(alarm["aging in hrs"] !== "N/A" && alarm["aging in hrs"] !== undefined) ? `${alarm["aging in hrs"]}h ` : ""}
-                                {(alarm["aging in min"] !== "N/A" && alarm["aging in min"] !== undefined) ? `${alarm["aging in min"]}m` : ""}
-                                {(alarm["aging in hrs"] === "N/A" || alarm["aging in hrs"] === undefined) && (alarm["aging in min"] === "N/A" || alarm["aging in min"] === undefined) ? "Alert Team" : ""}
+                                ✉️ {agingStr ? agingStr : "Alert Team"}
                              </button>
                           </div>
                           <p className="text-[10px] text-gray-500 truncate">{alarm.alarm_text || "—"}</p>
@@ -654,30 +665,32 @@ export default function Dashboard() {
               {!invLoading && invLoc !== "All" && invLogs.length === 0 && (
                 <p className="text-gray-400 text-xs text-center pt-8 italic">No logs match this filter.</p>
               )}
-              {/* NEW: Automatic Sorting applied to the Investigator logs */}
               {!invLoading && [...invLogs]
                 .sort((a, b) => {
                   const ageA = (Number(a["aging in hrs"]) || 0) * 60 + (Number(a["aging in min"]) || 0);
                   const ageB = (Number(b["aging in hrs"]) || 0) * 60 + (Number(b["aging in min"]) || 0);
                   return ageB - ageA; 
                 })
-                .map((log, i) => (
-                <div key={i} className="mb-2 bg-gray-50 rounded-xl p-3 border border-gray-100"
-                  style={{ borderLeftWidth: 3, borderLeftColor: SEV_COLOR[log.Severity_Label] ?? "#9CA3AF" }}>
-                  <div className="flex items-center justify-between gap-1 mb-1">
-                    <span className="text-xs font-bold text-gray-700 truncate">{log.nodename}</span>
-                    <Badge label={log.network_type} variant={NET_BG[log.network_type] ?? "bg-gray-100 text-gray-500"} />
-                  </div>
-                  <p className="text-[11px] text-gray-500 truncate">{log.alarm_text || "—"}</p>
-                  
-                  {/* NEW: Ageing Email Button in Investigator Panel */}
-                  <button onClick={(e) => handleMailTo(e, log)} className="mt-2 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-md transition-colors flex items-center gap-1 w-fit" title="Email Alarm">
-                    ✉️ Notify via Email 
-                    {log["aging in hrs"] !== "N/A" && log["aging in hrs"] !== undefined ? ` • Age: ${log["aging in hrs"]}h` : ""}
-                    {log["aging in min"] !== "N/A" && log["aging in min"] !== undefined ? ` ${log["aging in min"]}m` : ""}
-                  </button>
-                </div>
-              ))}
+                .map((log, i) => {
+                  const agingStr = formatAging(log["aging in hrs"], log["aging in min"]);
+                  return (
+                    <div key={i} className="mb-2 bg-gray-50 rounded-xl p-3 border border-gray-100"
+                      style={{ borderLeftWidth: 3, borderLeftColor: SEV_COLOR[log.Severity_Label] ?? "#9CA3AF" }}>
+                      <div className="flex items-center justify-between gap-1 mb-1">
+                        <span className="text-xs font-bold text-gray-700 truncate">{log.nodename}</span>
+                        <Badge label={log.network_type} variant={NET_BG[log.network_type] ?? "bg-gray-100 text-gray-500"} />
+                      </div>
+                      <p className="text-[11px] text-gray-500 truncate">{log.alarm_text || "—"}</p>
+                      
+                      {agingStr && <p className="text-[10px] text-gray-400 mt-1">Age: {agingStr}</p>}
+                      
+                      <button onClick={(e) => handleMailTo(e, log)} className="mt-2 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-md transition-colors flex items-center gap-1 w-fit" title="Email Alarm">
+                        ✉️ Notify via Email
+                      </button>
+                    </div>
+                  );
+                })
+              }
             </div>
           </div>
         )}
@@ -705,7 +718,6 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* KPI cards */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
             {[
               { label: "Total Alarms",    value: kpis ? kpis.total_alarms.toLocaleString()    : "—", accent: "border-l-red-500"    },
@@ -735,10 +747,8 @@ export default function Dashboard() {
 
           {uploadStage === "done" && (
             <>
-              {/* ── Bar charts + Pie ── */}
               <div id="all-charts-row" className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
-
-                {/* MSS bar */}
+                
                 <Card className="p-5" id="mss-chart-container">
                   <SectionHeader
                     icon="🖥️" title="MSS Network Severity"
@@ -776,7 +786,6 @@ export default function Dashboard() {
                   </div>
                 </Card>
 
-                {/* MGW bar */}
                 <Card className="p-5" id="mgw-chart-container">
                   <SectionHeader
                     icon="📡" title="MGW Network Severity"
@@ -814,7 +823,6 @@ export default function Dashboard() {
                   </div>
                 </Card>
 
-                {/* Pie */}
                 <Card className="p-5 flex flex-col" id="pie-chart-container">
                   <SectionHeader
                     icon="📊" title="Overall Breakdown"
