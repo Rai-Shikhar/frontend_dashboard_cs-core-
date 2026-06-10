@@ -5,7 +5,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, PieChart, Pie, Cell, LabelList,
 } from "recharts";
-import { toPng } from "html-to-image";
+import html2canvas from "html2canvas";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 type SeverityKey = "Critical" | "Major" | "Minor";
@@ -27,7 +27,7 @@ interface PieRow   { name: string; value: number; }
 interface AlarmRow { nodename: string; Severity_Label: SeverityKey; alarm_text: string; network_type: string; Location?: string; [k: string]: any; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const API = "https://vi-alarm-dashbaord-1.onrender.com";
+const API = "http://localhost:8000";
 const SEV_COLOR: Record<SeverityKey, string> = { Critical:"#EF4444", Major:"#F97316", Minor:"#10B981" };
 const SEV_BG:    Record<SeverityKey, string> = { Critical:"bg-red-100 text-red-700", Major:"bg-orange-100 text-orange-700", Minor:"bg-emerald-100 text-emerald-700" };
 const NET_BG: Record<string, string> = { MSS:"bg-violet-100 text-violet-700", MGW:"bg-sky-100 text-sky-700" };
@@ -64,14 +64,9 @@ function SectionHeader({
   );
 }
 
-function Card({
-  children,
-  className = "",
-  id = "",
-  ...props
-}: React.HTMLAttributes<HTMLDivElement> & { children: React.ReactNode }) {
+function Card({ children, className = "", id = "" }: { children: React.ReactNode; className?: string; id?: string }) {
   return (
-    <div id={id} className={`bg-white rounded-2xl border border-gray-200 shadow-sm ${className}`} {...props}>
+    <div id={id} className={`bg-white rounded-2xl border border-gray-200 shadow-sm ${className}`}>
       {children}
     </div>
   );
@@ -95,41 +90,38 @@ const exportToCSV = (data: any[], filename: string) => {
   document.body.removeChild(link);
 };
 
-const EXPORT_MAX_PIXEL_WIDTH = 2048;
-
 const exportChartAsPNG = async (elementId: string, filename: string) => {
   const element = document.getElementById(elementId);
   if (!element) return alert("Chart not found!");
 
+  const hideElements = element.querySelectorAll(".export-hide");
+  hideElements.forEach((el) => {
+    (el as HTMLElement).style.visibility = "hidden";
+  });
+
   try {
-    await document.fonts?.ready;
-
-    const rect = element.getBoundingClientRect();
-    const captureWidth = Math.ceil(Math.max(element.scrollWidth, rect.width));
-    const captureHeight = Math.ceil(Math.max(element.scrollHeight, rect.height));
-    const pixelRatio = Math.min(2, EXPORT_MAX_PIXEL_WIDTH / Math.max(captureWidth, 1));
-
-    const dataUrl = await toPng(element, {
+    const canvas = await html2canvas(element, {
       backgroundColor: "#ffffff",
-      width: captureWidth,
-      height: captureHeight,
-      pixelRatio,
-      cacheBust: true,
-      filter: (node) => !(node instanceof HTMLElement) || !node.classList.contains("export-hide"),
-      style: {
-        width: `${captureWidth}px`,
-        height: `${captureHeight}px`,
-        overflow: "visible",
-      },
+      scale: 3, 
+      logging: false,
+      useCORS: true,
+      onclone: (clonedDocument) => {
+        const elementsToScrub = clonedDocument.getElementById(elementId)?.querySelectorAll(".export-hide");
+        elementsToScrub?.forEach(el => (el as HTMLElement).style.display = "none");
+      }
     });
-
+    
     const a = document.createElement("a");
     a.download = `${filename}.png`;
-    a.href = dataUrl;
+    a.href = canvas.toDataURL("image/png");
     a.click();
   } catch (err) {
     console.error("Export failed", err);
     alert("Failed to export image. Check console for details.");
+  } finally {
+    hideElements.forEach((el) => {
+      (el as HTMLElement).style.visibility = "";
+    });
   }
 };
 
@@ -196,6 +188,37 @@ export default function Dashboard() {
   const mgwChart = filteredChart.filter(d => d.network_type === "MGW");
   const mssDonut = filteredDonut.filter(d => d.network_type === "MSS");
   const mgwDonut = filteredDonut.filter(d => d.network_type === "MGW");
+
+  // NEW: Calculates the top 5 highest ageing alarms for the new sidebar widget
+  const top5AgingAlarms = [...rawAlarms].sort((a, b) => {
+    const ageA = (Number(a["aging in hrs"]) || 0) * 60 + (Number(a["aging in min"]) || 0);
+    const ageB = (Number(b["aging in hrs"]) || 0) * 60 + (Number(b["aging in min"]) || 0);
+    return ageB - ageA; 
+  }).slice(0, 5);
+
+  // NEW: Email Action Handler
+  const handleMailTo = (e: React.MouseEvent, alarm: AlarmRow) => {
+    e.stopPropagation(); // Prevents opening the investigator panel when clicking the email button
+    const subject = encodeURIComponent(`Action Required: ${alarm.Severity_Label} Alarm at ${alarm.nodename}`);
+    
+    let agingText = "N/A";
+    if (alarm["aging in hrs"] !== undefined && alarm["aging in hrs"] !== "N/A") agingText = `${alarm["aging in hrs"]}h `;
+    if (alarm["aging in min"] !== undefined && alarm["aging in min"] !== "N/A") agingText += `${alarm["aging in min"]}m`;
+    agingText = agingText.trim();
+  
+    const body = encodeURIComponent(
+      `Team,\n\nPlease review the following network alarm:\n\n` +
+      `• Node: ${alarm.nodename}\n` +
+      `• Severity: ${alarm.Severity_Label}\n` +
+      `• Network: ${alarm.network_type}\n` +
+      `• Location: ${alarm.Location || "Unknown"}\n` +
+      `• Problem: ${alarm.alarm_text || "N/A"}\n` +
+      `• Aging: ${agingText}\n\n` +
+      `Please investigate immediately.\n\n` + 
+      `-- Vi Network Command Center`
+    );
+    window.location.href = `mailto:?subject=${subject}&body=${body}`;
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -275,6 +298,7 @@ export default function Dashboard() {
   const allSelected  = activeLocations.length === allLocations.length;
   const noneSelected = activeLocations.length === 0;
 
+  // ── AlarmTable ──────────────────────────────────────────────────────────────
   function AlarmTable({ rows, title }: { rows: ChartRow[]; title: string }) {
     if (!rows.length) return (
       <Card className="p-6 flex items-center justify-center min-h-[160px]">
@@ -338,6 +362,7 @@ export default function Dashboard() {
     );
   }
 
+  // ── SevBar ──────────────────────────────────────────────────────────────────
   function SevBar({ label, val, total, color }: { label: string; val: number; total: number; color: string }) {
     const pct = total > 0 ? Math.round((val / total) * 100) : 0;
     return (
@@ -351,6 +376,7 @@ export default function Dashboard() {
     );
   }
 
+  // ── DonutSection ────────────────────────────────────────────────────────────
   function DonutSection({ rows, title }: { rows: DonutRow[]; title: string }) {
     if (!rows.length) return null;
     const sectionId = `donut-${title.replace(/\s+/g, "-").toLowerCase()}`;
@@ -392,6 +418,7 @@ export default function Dashboard() {
     );
   }
 
+  // ── SheetPicker ─────────────────────────────────────────────────────────────
   function SheetPicker() {
     const toggle = (s: string) =>
       setSelectedSheets(prev => prev.includes(s) ? prev.filter(x => x !== s) : [...prev, s]);
@@ -434,6 +461,7 @@ export default function Dashboard() {
     );
   }
 
+  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
     <>
       {uploadStage === "sheet-pick" && !isCsv && <SheetPicker />}
@@ -538,27 +566,34 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Network Topology */}
+              {/* NEW: Top 5 Highest Ageing Alarms */}
               <div>
-                <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-2">Network Topology</p>
-                <div className="relative w-full h-56 bg-gray-50 border border-gray-200 rounded-xl overflow-hidden shadow-inner">
-                  <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: "radial-gradient(circle at center, #000 2px, transparent 2px)", backgroundSize: "15px 15px" }} />
-                  <div className="relative w-full h-full">
-                    <div className="absolute top-[30%] left-[25%] flex flex-col items-center">
-                      <div className="w-3.5 h-3.5 rounded-full bg-red-500 animate-pulse ring-4 ring-red-100" />
-                      <span className="text-[10px] font-black mt-2 text-gray-800">LUCKNOW</span>
-                      <span className="text-[8px] text-gray-500 font-bold tracking-wider">GN / AM</span>
-                    </div>
-                    <div className="absolute top-[65%] right-[25%] flex flex-col items-center">
-                      <div className="w-3 h-3 rounded-full bg-orange-500 ring-4 ring-orange-100" />
-                      <span className="text-[10px] font-black mt-2 text-gray-800">VARANASI</span>
-                    </div>
-                    <svg className="absolute inset-0 w-full h-full pointer-events-none">
-                      <line x1="25%" y1="30%" x2="75%" y2="65%" stroke="#E2E8F0" strokeWidth="2" strokeDasharray="4 4" />
-                    </svg>
-                  </div>
+                <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase mb-2">Top 5 Longest Ageing</p>
+                <div className="flex flex-col gap-2">
+                  {top5AgingAlarms.length === 0 ? (
+                    <div className="w-full h-24 bg-gray-50 border border-gray-200 rounded-xl flex items-center justify-center text-xs text-gray-400 italic">No aging data</div>
+                  ) : (
+                    top5AgingAlarms.map((alarm, idx) => {
+                      const color = SEV_COLOR[alarm.Severity_Label] ?? "#9CA3AF";
+                      return (
+                        <div key={idx} className="bg-white p-3 rounded-xl border border-gray-200 shadow-sm relative group hover:border-red-200 transition-colors" style={{ borderLeftWidth: 3, borderLeftColor: color }}>
+                          <div className="flex justify-between items-start mb-1">
+                             <span className="font-bold text-xs text-gray-800 truncate pr-2">{alarm.nodename}</span>
+                             {/* NEW: Email action button */}
+                             <button onClick={(e) => handleMailTo(e, alarm)} className="text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded-md transition-colors flex items-center gap-1 shrink-0" title="Email Alarm">
+                                ✉️ {(alarm["aging in hrs"] !== "N/A" && alarm["aging in hrs"] !== undefined) ? `${alarm["aging in hrs"]}h ` : ""}
+                                {(alarm["aging in min"] !== "N/A" && alarm["aging in min"] !== undefined) ? `${alarm["aging in min"]}m` : ""}
+                                {(alarm["aging in hrs"] === "N/A" || alarm["aging in hrs"] === undefined) && (alarm["aging in min"] === "N/A" || alarm["aging in min"] === undefined) ? "Alert Team" : ""}
+                             </button>
+                          </div>
+                          <p className="text-[10px] text-gray-500 truncate">{alarm.alarm_text || "—"}</p>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
+
             </div>
           ) : (
             <div className="flex-1 px-4 py-6">
@@ -619,7 +654,14 @@ export default function Dashboard() {
               {!invLoading && invLoc !== "All" && invLogs.length === 0 && (
                 <p className="text-gray-400 text-xs text-center pt-8 italic">No logs match this filter.</p>
               )}
-              {!invLoading && invLogs.map((log, i) => (
+              {/* NEW: Automatic Sorting applied to the Investigator logs */}
+              {!invLoading && [...invLogs]
+                .sort((a, b) => {
+                  const ageA = (Number(a["aging in hrs"]) || 0) * 60 + (Number(a["aging in min"]) || 0);
+                  const ageB = (Number(b["aging in hrs"]) || 0) * 60 + (Number(b["aging in min"]) || 0);
+                  return ageB - ageA; 
+                })
+                .map((log, i) => (
                 <div key={i} className="mb-2 bg-gray-50 rounded-xl p-3 border border-gray-100"
                   style={{ borderLeftWidth: 3, borderLeftColor: SEV_COLOR[log.Severity_Label] ?? "#9CA3AF" }}>
                   <div className="flex items-center justify-between gap-1 mb-1">
@@ -627,12 +669,13 @@ export default function Dashboard() {
                     <Badge label={log.network_type} variant={NET_BG[log.network_type] ?? "bg-gray-100 text-gray-500"} />
                   </div>
                   <p className="text-[11px] text-gray-500 truncate">{log.alarm_text || "—"}</p>
-                  {(log["aging in hrs"] !== undefined || log["aging in min"] !== undefined) && (
-                    <p className="text-[10px] text-gray-400 mt-1">
-                      {log["aging in hrs"] !== undefined ? `${log["aging in hrs"]}h ` : ""}
-                      {log["aging in min"] !== undefined ? `${log["aging in min"]}m` : ""}
-                    </p>
-                  )}
+                  
+                  {/* NEW: Ageing Email Button in Investigator Panel */}
+                  <button onClick={(e) => handleMailTo(e, log)} className="mt-2 text-[10px] font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 px-2 py-1 rounded-md transition-colors flex items-center gap-1 w-fit" title="Email Alarm">
+                    ✉️ Notify via Email 
+                    {log["aging in hrs"] !== "N/A" && log["aging in hrs"] !== undefined ? ` • Age: ${log["aging in hrs"]}h` : ""}
+                    {log["aging in min"] !== "N/A" && log["aging in min"] !== undefined ? ` ${log["aging in min"]}m` : ""}
+                  </button>
                 </div>
               ))}
             </div>
@@ -642,7 +685,6 @@ export default function Dashboard() {
         {/* ── MAIN CONTENT ──────────────────────────────────────────────── */}
         <div className="flex-1 overflow-y-auto px-8 py-7 min-w-0">
 
-          {/* Header */}
           <div className="flex items-center justify-between mb-6">
             <div>
               <h1 className="text-2xl font-black text-gray-900 tracking-tight">Command Center</h1>
@@ -679,7 +721,6 @@ export default function Dashboard() {
             ))}
           </div>
 
-          {/* Active location filter summary */}
           {uploadStage === "done" && !allSelected && (
             <div className="flex items-center gap-2 mb-4 text-xs text-gray-500">
               <span className="font-semibold">Showing:</span>
@@ -829,6 +870,7 @@ export default function Dashboard() {
             </>
           )}
 
+          {/* Idle splash */}
           {uploadStage === "idle" && (
             <div className="flex flex-col items-center justify-center py-28 text-center">
               <div className="w-16 h-16 rounded-2xl bg-red-50 border border-red-100 flex items-center justify-center mb-5">
