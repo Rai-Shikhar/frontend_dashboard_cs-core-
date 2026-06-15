@@ -214,7 +214,7 @@ export default function Dashboard() {
     return ageB - ageA; 
   }).slice(0, 5);
 
-  // UPGRADED: Opens Gmail explicitly in a new browser tab with Days/Hours/Mins format
+ // UPGRADED: Pulls exact 'to' and 'cc' columns from your uploaded sheet
   const handleMailTo = (e: React.MouseEvent, alarm: AlarmRow) => {
     e.stopPropagation();
     const subject = encodeURIComponent(`Action Required: ${alarm.Severity_Label} Alarm at ${alarm.nodename}`);
@@ -232,8 +232,31 @@ export default function Dashboard() {
       `-- Vi Network Command Center`
     );
     
-    // Web URL specifically forces Gmail compose window
-    const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&su=${subject}&body=${body}`;
+    // 1. Grab explicit columns (checking common capitalizations just in case Excel shifts them)
+    let targetTo = alarm["to"] || alarm["To"] || alarm["TO"];
+    let targetCc = alarm["cc"] || alarm["Cc"] || alarm["CC"];
+
+    // 2. Smart fallback: If 'to' is completely empty on a specific row, try to find an @ symbol
+    if (!targetTo) {
+      for (const key in alarm) {
+        if (typeof alarm[key] === "string" && alarm[key].includes("@") && key.toLowerCase() !== "cc") {
+          targetTo = alarm[key];
+          break;
+        }
+      }
+    }
+
+    // 3. Absolute fallback so the button never breaks
+    if (!targetTo) {
+       targetTo = "team@example.com"; 
+    }
+
+    // 4. Build the final Gmail URL with both TO and CC parameters
+    let gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${targetTo}&su=${subject}&body=${body}`;
+    if (targetCc) {
+      gmailUrl += `&cc=${targetCc}`;
+    }
+    
     window.open(gmailUrl, "_blank");
   };
 
