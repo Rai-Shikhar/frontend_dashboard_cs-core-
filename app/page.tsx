@@ -27,7 +27,7 @@ interface PieRow   { name: string; value: number; }
 interface AlarmRow { nodename: string; Severity_Label: SeverityKey; alarm_text: string; network_type: string; Location?: string; [k: string]: any; }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
-const API = "https://vi-alarm-dashbaord-1.onrender.com"; // Your live backend
+const API = "https://vi-alarm-dashboard.onrender.com"; // Your live backend
 const SEV_COLOR: Record<SeverityKey, string> = { Critical:"#EF4444", Major:"#F97316", Minor:"#10B981" };
 const SEV_BG:    Record<SeverityKey, string> = { Critical:"bg-red-100 text-red-700", Major:"bg-orange-100 text-orange-700", Minor:"bg-emerald-100 text-emerald-700" };
 const NET_BG: Record<string, string> = { MSS:"bg-violet-100 text-violet-700", MGW:"bg-sky-100 text-sky-700" };
