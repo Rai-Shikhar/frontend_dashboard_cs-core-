@@ -214,9 +214,13 @@ export default function Dashboard() {
     return ageB - ageA; 
   }).slice(0, 5);
 
- // UPGRADED: Pulls exact 'to' and 'cc' columns from your uploaded sheet
+ // UPGRADED: Aggressive column matching (ignores spaces/caps) + Debugger
   const handleMailTo = (e: React.MouseEvent, alarm: AlarmRow) => {
     e.stopPropagation();
+    
+    // 🛑 DEBUGGER: This will print the raw row data to your browser console!
+    console.log("Raw Row Data for this alarm:", alarm);
+
     const subject = encodeURIComponent(`Action Required: ${alarm.Severity_Label} Alarm at ${alarm.nodename}`);
     const agingText = formatAging(alarm["aging in hrs"], alarm["aging in min"]) || "N/A";
   
@@ -232,26 +236,35 @@ export default function Dashboard() {
       `-- Vi Network Command Center`
     );
     
-    // 1. Grab explicit columns (checking common capitalizations just in case Excel shifts them)
-    let targetTo = alarm["to"] || alarm["To"] || alarm["TO"];
-    let targetCc = alarm["cc"] || alarm["Cc"] || alarm["CC"];
+    let targetTo = null;
+    let targetCc = null;
 
-    // 2. Smart fallback: If 'to' is completely empty on a specific row, try to find an @ symbol
-    if (!targetTo) {
+    // 1. Super-Robust Matcher: Check every single column name, strip spaces, and make lowercase
+    for (const key in alarm) {
+      const cleanKey = key.trim().toLowerCase();
+      if (cleanKey === "to") targetTo = alarm[key];
+      if (cleanKey === "cc") targetCc = alarm[key];
+    }
+
+    // 2. Smart fallback if empty
+    if (!targetTo || targetTo === "NaN") {
       for (const key in alarm) {
-        if (typeof alarm[key] === "string" && alarm[key].includes("@") && key.toLowerCase() !== "cc") {
-          targetTo = alarm[key];
+        const val = alarm[key];
+        if (typeof val === "string" && val.includes("@") && key.trim().toLowerCase() !== "cc") {
+          targetTo = val;
           break;
         }
       }
     }
 
-    // 3. Absolute fallback so the button never breaks
-    if (!targetTo) {
+    // 3. Absolute fallback so it never crashes
+    if (!targetTo || targetTo === "NaN") {
        targetTo = "team@example.com"; 
     }
 
-    // 4. Build the final Gmail URL with both TO and CC parameters
+    // Clean up empty CC fields (Pandas sends empty Excel cells as "NaN" or null)
+    if (targetCc === "NaN") targetCc = null;
+
     let gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${targetTo}&su=${subject}&body=${body}`;
     if (targetCc) {
       gmailUrl += `&cc=${targetCc}`;
@@ -259,7 +272,7 @@ export default function Dashboard() {
     
     window.open(gmailUrl, "_blank");
   };
-
+  
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
